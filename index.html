@@ -109,7 +109,7 @@
         the two <b>square corners</b> scale proportionally (Shift: free), the two <b>curved corners</b> rotate
         about the centre (Shift: snap to 15°), the <b>bars</b> on the top and right edges stretch in one
         direction, and the <b>slanted</b> handles on the bottom and left edges shear along that edge.<br><br>
-        Drag empty space to pan, use the wheel or pinch to zoom. Arrow keys nudge the selected map,
+        Click on empty space to deselect and hide all frames; drag it to pan. Use the wheel or pinch to zoom. Arrow keys nudge the selected map,
         Delete removes it. The link in the address bar encodes the whole figure.
       </div>
     </details>
@@ -211,7 +211,7 @@ function setDisp(i, F) {
   const inv = inverse(state.seed); if (!inv) return;
   state.maps[i - 1] = compose(F, inv);
 }
-const rawMap = i => i === 0 ? state.seed : state.maps[i - 1];
+const rawMap = i => i < 0 ? null : i === 0 ? state.seed : state.maps[i - 1];
 
 function depthFor(budget) {
   const n = state.maps.length; let total = 1, L = 0;
@@ -368,6 +368,7 @@ function drawHandle(c, hp) {
 }
 function drawOverlay(c) {
   const total = state.maps.length;
+  if (state.sel < 0) return;      // nothing selected: no wire frames at all
   for (let i = 0; i <= total; i++) {
     const F = dispMap(i), q = frameQuad(F), col = mapColor(i), sel = i === state.sel;
     c.strokeStyle = col; c.setLineDash(sel ? [] : [4, 4]); c.lineWidth = sel ? 1.5 : 1;
@@ -406,6 +407,7 @@ let drag = null, pinch = null, hashTimer = null;
 const isTouch = e => e.pointerType === 'touch';
 function hitHandle(px, py, radius) {
   let best = null, bd = radius;
+  if (state.sel < 0) return null;
   for (const hp of handlePositions(dispMap(state.sel))) { const d = Math.hypot(hp.x - px, hp.y - py); if (d < bd) { bd = d; best = hp.h; } }
   return best;
 }
@@ -514,6 +516,7 @@ function endPointer(e) {
   pointers.delete(e.pointerId);
   if (pinch && pointers.size < 2) { pinch = null; requestRender(false); return; }
   if (!drag) return;
+  if (drag.kind === 'pan' && !drag.moved && state.sel >= 0) { state.sel = -1; renderMapList(); }
   if (drag.kind !== 'pan' && drag.moved) { renderMapList(); scheduleHash(); }
   drag = null; requestRender(false);
 }
@@ -528,6 +531,7 @@ canvas.addEventListener('wheel', e => {
 }, { passive: false });
 window.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (state.sel < 0) return;
   const step = e.shiftKey ? 0.1 : 0.01;
   const nudge = (dx, dy) => { setDisp(state.sel, compose(translate(dx, dy), dispMap(state.sel))); requestRender(false); scheduleHash(); e.preventDefault(); };
   if (e.key === 'ArrowLeft') nudge(-step, 0); else if (e.key === 'ArrowRight') nudge(step, 0);
@@ -552,7 +556,10 @@ function renderMapList() {
     div.addEventListener('click', () => { state.sel = i; renderMapList(); requestRender(false); });
     box.append(div);
   }
-  $('del').disabled = state.sel === 0 || state.maps.length <= 1;
+  const none = state.sel < 0;
+  $('del').disabled = none || state.sel === 0 || state.maps.length <= 1;
+  $('dup').disabled = none; $('resetMap').disabled = none;
+  for (const inp of $('matrix').querySelectorAll('input')) { inp.disabled = none; if (none) inp.value = ''; }
 }
 function syncMatrixInputs() {
   const M = rawMap(state.sel); if (!M) return;
@@ -576,10 +583,11 @@ function addMap(M) {
   state.sel = state.maps.length; afterMapsChanged();
 }
 function removeMap() {
-  if (state.sel === 0 || state.maps.length <= 1) return;
+  if (state.sel <= 0 || state.maps.length <= 1) return;
   state.maps.splice(state.sel - 1, 1); state.sel = Math.min(state.sel, state.maps.length); afterMapsChanged();
 }
 function resetMap() { // seed -> identity; other maps -> the preset's map of the same number, or a fresh default
+  if (state.sel < 0) return;
   if (state.sel === 0) state.seed = identity();
   else { const pm = (PRESETS[state.preset] || PRESETS.tree).maps(); state.maps[state.sel - 1] = pm[state.sel - 1] ? { ...pm[state.sel - 1] } : defaultNewMap(); }
   afterMapsChanged();
@@ -587,6 +595,7 @@ function resetMap() { // seed -> identity; other maps -> the preset's map of the
 function afterMapsChanged() { syncDepthSlider(); renderMapList(); requestRender(false); scheduleHash(); }
 $('add').onclick = () => addMap();
 $('dup').onclick = () => { // a copy of the selected map's frame, shifted a little
+  if (state.sel < 0) return;
   const F = compose(translate(0.1, 0.1), dispMap(state.sel)), inv = inverse(state.seed);
   if (inv) addMap(compose(F, inv));
 };
