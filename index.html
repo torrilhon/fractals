@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Fractals from linear mappings</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --panel: rgba(255,255,255,0.94);
+    --text: #1d1d1f;
+    --muted: #6b6b70;
+    --border: #d9d9de;
+    --accent: #1b6ac9;
+    --ink: #111111;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171b;
+      --panel: rgba(28,30,36,0.94);
+      --text: #ececf0;
+      --muted: #9a9aa4;
+      --border: #3a3c44;
+      --accent: #5aa0ff;
+      --ink: #f2f2f2;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
+  #panel { position: fixed; left: 12px; top: 12px; width: 320px; max-height: calc(100% - 24px);
+    overflow: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.15); padding: 10px 12px 12px; backdrop-filter: blur(6px); }
+  #panel h1 { font-size: 15px; margin: 0; display: flex; align-items: center; justify-content: space-between; }
+  #panel h1 button { font-size: 13px; }
+  #panel.collapsed .body { display: none; }
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  .row label { color: var(--muted); min-width: 52px; }
+  select, input[type=number], button { font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--border); border-radius: 7px; padding: 4px 8px; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  input[type=range] { flex: 1; min-width: 100px; }
+  button:disabled { opacity: 0.45; cursor: default; }
+  #maps { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+  .map { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 7px; cursor: pointer;
+    border: 1px solid transparent; }
+  .map.sel { border-color: var(--accent); background: rgba(27,106,201,0.08); }
+  .map .sw { width: 14px; height: 14px; border-radius: 4px; flex: none; }
+  .map .nm { flex: 1; }
+  .mapbtns button { padding: 4px 7px; flex: 1; }
+  .matrix { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 6px; }
+  .matrix input { width: 100%; padding: 3px 5px; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .hint b { color: var(--text); font-weight: 600; }
+  #status { color: var(--muted); font-size: 12px; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 8px; }
+  @media (max-width: 640px) {
+    #panel { left: 0; right: 0; top: auto; bottom: 0; width: auto; max-height: 52vh;
+      border-radius: 14px 14px 0 0; border-bottom: 0; padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="panel">
+  <h1><span>Fractals from linear maps</span><button id="collapse" title="Collapse panel">hide</button></h1>
+  <div class="body">
+    <div class="row">
+      <label>Preset</label>
+      <select id="preset" style="flex:1; min-width:0"></select>
+      <button id="fit" title="Fit the view to the drawing">Fit</button>
+    </div>
+    <div id="maps"></div>
+    <div class="row mapbtns"><button id="add" title="Add a map">+ Add</button><button id="dup">Duplicate</button><button id="del">Remove</button><button id="resetMap" title="Reset the selected map">Reset</button></div>
+    <div class="matrix" id="matrix">
+      <input type="number" step="0.01" data-k="a" title="a"><input type="number" step="0.01" data-k="b" title="b"><input type="number" step="0.01" data-k="e" title="e (x shift)">
+      <input type="number" step="0.01" data-k="c" title="c"><input type="number" step="0.01" data-k="d" title="d"><input type="number" step="0.01" data-k="f" title="f (y shift)">
+    </div>
+    <div class="hint" style="margin-top:4px">x' = a·x + b·y + e,&nbsp; y' = c·x + d·y + f</div>
+    <div class="row">
+      <label>Depth</label>
+      <input type="range" id="depth" min="1" max="16" value="10">
+      <span id="depthVal" style="min-width:2ch">10</span>
+    </div>
+    <div class="row">
+      <label>Colour</label>
+      <select id="color">
+        <option value="level">by level</option>
+        <option value="map">by map</option>
+        <option value="mono">single</option>
+      </select>
+      <label style="min-width:0"><input type="checkbox" id="showAll" checked> all levels</label>
+    </div>
+    <div class="row">
+      <button id="link">Copy link</button>
+      <button id="png">Save PNG</button>
+      <button id="reload" title="Reload the current preset">Reload preset</button>
+    </div>
+    <div id="status"></div>
+    <details>
+      <summary>How to use</summary>
+      <div class="hint">
+        Map 0 is the seed triangle. Every other map is a linear map applied to it, shown as a coloured outline.
+        The drawing applies all maps over and over, down to the chosen depth.<br><br>
+        <b>Select</b> a map by tapping its outline, <b>drag</b> inside it to move it. On the selected frame:
+        the two <b>square corners</b> scale proportionally (Shift: free), the two <b>curved corners</b> rotate
+        about the centre (Shift: snap to 15°), the <b>bars</b> on the top and right edges stretch in one
+        direction, and the <b>slanted</b> handles on the bottom and left edges shear along that edge.<br><br>
+        Click on empty space to deselect and hide all frames; drag it to pan. Use the wheel or pinch to zoom. Arrow keys nudge the selected map,
+        Delete removes it. The link in the address bar encodes the whole figure.
+      </div>
+    </details>
+  </div>
+</div>
+
+<script>
+'use strict';
+// ---------------------------------------------------------------- affine maps
+// A map is {a,b,c,d,e,f}:  x' = a x + b y + e,  y' = c x + d y + f
+const aff = (a, b, c, d, e, f) => ({ a, b, c, d, e, f });
+const identity = () => aff(1, 0, 0, 1, 0, 0);
+const apply = (M, x, y) => [M.a * x + M.b * y + M.e, M.c * x + M.d * y + M.f];
+function compose(M, N) { // M after N
+  return aff(M.a * N.a + M.b * N.c, M.a * N.b + M.b * N.d,
+             M.c * N.a + M.d * N.c, M.c * N.b + M.d * N.d,
+             M.a * N.e + M.b * N.f + M.e, M.c * N.e + M.d * N.f + M.f);
+}
+function inverse(M) {
+  const det = M.a * M.d - M.b * M.c;
+  if (Math.abs(det) < 1e-12) return null;
+  const a = M.d / det, b = -M.b / det, c = -M.c / det, d = M.a / det;
+  return aff(a, b, c, d, -(a * M.e + b * M.f), -(c * M.e + d * M.f));
+}
+// similarity (rotation + scale, no reflection) taking segment P0P1 onto Q0Q1
+function seg(P0, P1, Q0, Q1) {
+  const dx = P1[0] - P0[0], dy = P1[1] - P0[1], ex = Q1[0] - Q0[0], ey = Q1[1] - Q0[1];
+  const n = dx * dx + dy * dy, zr = (ex * dx + ey * dy) / n, zi = (ey * dx - ex * dy) / n;
+  return aff(zr, -zi, zi, zr, Q0[0] - (zr * P0[0] - zi * P0[1]), Q0[1] - (zi * P0[0] + zr * P0[1]));
+}
+function rotAbout(th, cx, cy) {
+  const c = Math.cos(th), s = Math.sin(th);
+  return aff(c, -s, s, c, cx - c * cx + s * cy, cy - s * cx - c * cy);
+}
+const translate = (dx, dy) => aff(1, 0, 0, 1, dx, dy);
+const scaleAbout = (su, sv, cx, cy) => aff(su, 0, 0, sv, cx - su * cx, cy - sv * cy);
+const shearU = (k, v0) => aff(1, k, 0, 1, -k * v0, 0);   // u' = u + k (v - v0)
+const shearV = (k, u0) => aff(1, 0, k, 1, 0, -k * u0);   // v' = v + k (u - u0)
+
+// ---------------------------------------------------------------- seed shape (as in the 1998 original)
+const SEED = [[-0.1, -0.4], [0.1, -0.4], [0, 0.6]];
+const BOX = { u0: -0.1, u1: 0.1, v0: -0.4, v1: 0.6 };
+const P0 = [0, -0.4], P1 = [0, 0.6];                 // base centre -> tip, the "spine" of the seed
+const along = (Q, th, s) => [Q[0] - s * Math.sin(th), Q[1] + s * Math.cos(th)]; // spine rotated by th, scaled by s
+
+// ---------------------------------------------------------------- presets
+const PRESETS = {
+  tree: { name: 'Binary tree', depth: 11, maps: () => [
+    seg(P0, P1, [0, 0.55], along([0, 0.55], 0.48, 0.72)),
+    seg(P0, P1, [0, 0.55], along([0, 0.55], -0.40, 0.66)) ] },
+  pythagoras: { name: 'Pythagoras tree', depth: 11, maps: () => {
+    const TL = [BOX.u0, BOX.v1], TR = [BOX.u1, BOX.v1], BL = [BOX.u0, BOX.v0], BR = [BOX.u1, BOX.v0], s = Math.SQRT1_2;
+    return [ seg(BL, BR, TL, [TL[0] + s * 0.2 * Math.SQRT1_2, TL[1] + s * 0.2 * Math.SQRT1_2]),
+             seg(BR, BL, TR, [TR[0] - s * 0.2 * Math.SQRT1_2, TR[1] + s * 0.2 * Math.SQRT1_2]) ]; } },
+  dragon: { name: 'Heighway dragon', depth: 13, maps: () => {
+    const f1 = seg(P0, P1, P0, along(P0, Math.PI / 4, Math.SQRT1_2));
+    return [f1, seg(P0, P1, P1, apply(f1, P1[0], P1[1]))]; } },
+  levy: { name: 'Lévy C curve', depth: 13, maps: () => {
+    const f1 = seg(P0, P1, P0, along(P0, Math.PI / 4, Math.SQRT1_2));
+    return [f1, seg(P0, P1, apply(f1, P1[0], P1[1]), P1)]; } },
+  koch: { name: 'Koch curve', depth: 6, maps: () => {
+    const A = P0, B = [0, -0.4 + 1 / 3], C = along(B, Math.PI / 3, 1 / 3), D = [0, -0.4 + 2 / 3], E = P1;
+    return [seg(P0, P1, A, B), seg(P0, P1, B, C), seg(P0, P1, C, D), seg(P0, P1, D, E)]; } },
+  sierpinski: { name: 'Sierpinski triangle', depth: 8, maps: () =>
+    SEED.map(c => seg(P0, P1, [(c[0] + P0[0]) / 2, (c[1] + P0[1]) / 2], [(c[0] + P1[0]) / 2, (c[1] + P1[1]) / 2])) },
+  fern: { name: 'Barnsley fern', depth: 8, maps: () => {
+    // Barnsley's fern lives in x∈[-2.2,2.7], y∈[0,10]; conjugate it into the seed frame
+    const phi = aff(0.1, 0, 0, 0.1, 0, -0.4), phiInv = inverse(phi);
+    return [aff(0, 0, 0, 0.16, 0, 0), aff(0.85, 0.04, -0.04, 0.85, 0, 1.6),
+            aff(0.2, -0.26, 0.23, 0.22, 0, 1.6), aff(-0.15, 0.28, 0.26, 0.24, 0, 0.44)]
+      .map(f => compose(phi, compose(f, phiInv))); } },
+  spiral: { name: 'Spiral', depth: 14, maps: () => [
+    compose(scaleAbout(0.93, 0.93, 0.45, 0.15), rotAbout(0.42, 0.45, 0.15)),
+    seg(P0, P1, [0.05, 0.62], along([0.05, 0.62], -1.1, 0.33)) ] },
+  identity: { name: 'Blank (two identical copies)', depth: 6, maps: () => [identity(), identity()] },
+};
+const MAP_COLORS = ['#d7263d', '#1b6ac9', '#1f9e55', '#e08a00', '#7b3fb5', '#0f9aa8', '#c2185b', '#5d6d2e'];
+const defaultNewMap = () => seg(P0, P1, [0.05, 0.62], along([0.05, 0.62], -0.5, 0.5));
+
+// ---------------------------------------------------------------- state
+// state.seed ("Map 0") transforms the seed triangle itself; state.maps[i-1] is "Map i".
+// On screen, map i is shown through its display map F_i = M_i ∘ seed, so its frame always encloses its copy.
+const state = {
+  seed: identity(), maps: [], sel: 1, depth: 10, color: 'level', showAll: true, preset: 'tree',
+  view: { cx: 0, cy: 1, zoom: 200 },
+};
+const FULL_BUDGET = 200000, DRAG_BUDGET = 30000;
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0, dpr = 1;
+const dark = () => matchMedia('(prefers-color-scheme: dark)').matches;
+const inkColor = () => dark() ? '#f2f2f2' : '#111111';
+const mapColor = i => i === 0 ? inkColor() : MAP_COLORS[(i - 1) % MAP_COLORS.length];
+let lastBBox = null, lastCount = 0, lastMs = 0;
+
+const dispMap = i => i === 0 ? state.seed : compose(state.maps[i - 1], state.seed);
+function setDisp(i, F) {
+  if (i === 0) { state.seed = F; return; }
+  const inv = inverse(state.seed); if (!inv) return;
+  state.maps[i - 1] = compose(F, inv);
+}
+const rawMap = i => i < 0 ? null : i === 0 ? state.seed : state.maps[i - 1];
+
+function depthFor(budget) {
+  const n = state.maps.length; let total = 1, L = 0;
+  while (L < 20) { const next = total + Math.pow(n, L + 1); if (next > budget) break; total = next; L++; }
+  return Math.max(1, L);
+}
+function maxDepth() { return depthFor(FULL_BUDGET); }
+
+// ---------------------------------------------------------------- view
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  W = canvas.clientWidth; H = canvas.clientHeight;
+  canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+  requestRender(false);
+}
+const toPx = (x, y) => [W / 2 + (x - state.view.cx) * state.view.zoom, H / 2 - (y - state.view.cy) * state.view.zoom];
+const toWorld = (px, py) => [state.view.cx + (px - W / 2) / state.view.zoom, state.view.cy - (py - H / 2) / state.view.zoom];
+function viewMatrix() { const z = state.view.zoom; return aff(z, 0, 0, -z, W / 2 - state.view.cx * z, H / 2 + state.view.cy * z); }
+function freeArea() { // the part of the canvas not covered by the panel
+  const p = document.getElementById('panel'), r = p.getBoundingClientRect(), pad = 16;
+  if (p.classList.contains('collapsed')) return [0, 0, W, H];
+  if (matchMedia('(max-width: 640px)').matches) return [0, 0, W, Math.max(H * 0.4, r.top - pad)];
+  return [r.right + pad, 0, W, H];
+}
+function fitBox(x0, y0, x1, y1) { // world box -> view that shows it inside the free area
+  const [ax0, ay0, ax1, ay1] = freeArea(), aw = Math.max(ax1 - ax0, 50), ah = Math.max(ay1 - ay0, 50);
+  const w = Math.max(x1 - x0, 1e-6), h = Math.max(y1 - y0, 1e-6);
+  const z = Math.max(1e-3, Math.min(1e6, Math.min(aw / w, ah / h) * 0.9));
+  const acx = (ax0 + ax1) / 2, acy = (ay0 + ay1) / 2;
+  state.view = { zoom: z, cx: (x0 + x1) / 2 - (acx - W / 2) / z, cy: (y0 + y1) / 2 + (acy - H / 2) / z };
+}
+function fitInitial() { fitBox(-2, -0.5, 2, 2.5); }
+function fitToDrawing() {
+  if (!lastBBox || !isFinite(lastBBox[0])) { fitInitial(); return; }
+  const [x0, y0] = toWorld(lastBBox[0], lastBBox[3]), [x1, y1] = toWorld(lastBBox[2], lastBBox[1]);
+  fitBox(x0, y0, x1, y1);
+}
+
+// ---------------------------------------------------------------- rendering
+function levelColor(t, dk) { return `hsl(${215 + 150 * t}, 65%, ${dk ? 52 + 18 * t : 32 + 24 * t}%)`; }
+const BATCH = 4000; // triangles per stroke call
+function drawFractal(c, budget, overlay) {
+  const t0 = performance.now();
+  const dk = dark();
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.fillStyle = dk ? '#15171b' : '#ffffff';
+  c.fillRect(0, 0, W, H);
+  const L = Math.min(state.depth, depthFor(budget));
+  const n = state.maps.length, maps = state.maps, showAll = state.showAll, mode = state.color;
+  const ink = inkColor();
+  const seedPts = SEED.map(p => apply(state.seed, p[0], p[1]));
+  const [s0x, s0y] = seedPts[0], [s1x, s1y] = seedPts[1], [s2x, s2y] = seedPts[2];
+  const bb = [Infinity, Infinity, -Infinity, -Infinity]; let count = 0;
+  c.lineWidth = 1; c.lineJoin = 'round';
+  // breadth first: level k holds n^k composed maps (world -> pixels), as flat arrays of 6 numbers
+  const V = viewMatrix();
+  let cur = new Float64Array([V.a, V.b, V.c, V.d, V.e, V.f]);
+  for (let level = 0; level <= L; level++) {
+    const m = cur.length / 6;
+    if (showAll || level === L) {
+      // nodes are ordered by top-level branch: the first n^(level-1) belong to map 1, and so on
+      const perBranch = level === 0 ? 1 : Math.pow(n, level - 1);
+      let idx = 0;
+      while (idx < m) {
+        const branch = level === 0 ? 0 : Math.floor(idx / perBranch);
+        const stop = Math.min(m, idx + BATCH, mode === 'map' ? (branch + 1) * perBranch : m);
+        c.strokeStyle = mode === 'level' ? (level === 0 ? ink : levelColor(level / Math.max(L, 1), dk))
+          : mode === 'map' ? (level === 0 ? ink : MAP_COLORS[branch % MAP_COLORS.length]) : ink;
+        c.beginPath();
+        for (let i = idx; i < stop; i++) {
+          const o = i * 6, a = cur[o], b = cur[o + 1], cc = cur[o + 2], d = cur[o + 3], e = cur[o + 4], f = cur[o + 5];
+          const x0 = a * s0x + b * s0y + e, y0 = cc * s0x + d * s0y + f;
+          const x1 = a * s1x + b * s1y + e, y1 = cc * s1x + d * s1y + f;
+          const x2 = a * s2x + b * s2y + e, y2 = cc * s2x + d * s2y + f;
+          c.moveTo(x0, y0); c.lineTo(x1, y1); c.lineTo(x2, y2); c.closePath();
+          if (x0 < bb[0]) bb[0] = x0; if (x0 > bb[2]) bb[2] = x0; if (y0 < bb[1]) bb[1] = y0; if (y0 > bb[3]) bb[3] = y0;
+          if (x1 < bb[0]) bb[0] = x1; if (x1 > bb[2]) bb[2] = x1; if (y1 < bb[1]) bb[1] = y1; if (y1 > bb[3]) bb[3] = y1;
+          if (x2 < bb[0]) bb[0] = x2; if (x2 > bb[2]) bb[2] = x2; if (y2 < bb[1]) bb[1] = y2; if (y2 > bb[3]) bb[3] = y2;
+        }
+        c.stroke();
+        count += stop - idx; idx = stop;
+      }
+    }
+    if (level === L) break;
+    const next = new Float64Array(m * n * 6);
+    for (let i = 0; i < m; i++) {
+      const o = i * 6, a = cur[o], b = cur[o + 1], cc = cur[o + 2], d = cur[o + 3], e = cur[o + 4], f = cur[o + 5];
+      for (let k = 0; k < n; k++) {
+        const N = maps[k], p = (i * n + k) * 6;
+        next[p] = a * N.a + b * N.c; next[p + 1] = a * N.b + b * N.d;
+        next[p + 2] = cc * N.a + d * N.c; next[p + 3] = cc * N.b + d * N.d;
+        next[p + 4] = a * N.e + b * N.f + e; next[p + 5] = cc * N.e + d * N.f + f;
+      }
+    }
+    cur = next;
+  }
+  if (overlay) drawOverlay(c);
+  lastBBox = bb; lastCount = count; lastMs = performance.now() - t0;
+  return L;
+}
+
+// ---------------------------------------------------------------- gizmo
+// Handles live in the seed-local coordinates of the frame box. One diagonal scales, the other rotates;
+// the top and right edges stretch along their normal, the bottom and left edges shear along themselves.
+const um = (BOX.u0 + BOX.u1) / 2, vm = (BOX.v0 + BOX.v1) / 2;
+const HANDLES = [
+  { id: 'tl', u: BOX.u0, v: BOX.v1, op: 'scale' },
+  { id: 'br', u: BOX.u1, v: BOX.v0, op: 'scale' },
+  { id: 'tr', u: BOX.u1, v: BOX.v1, op: 'rotate' },
+  { id: 'bl', u: BOX.u0, v: BOX.v0, op: 'rotate' },
+  { id: 't', u: um, v: BOX.v1, op: 'stretch', axis: 'v' },
+  { id: 'r', u: BOX.u1, v: vm, op: 'stretch', axis: 'u' },
+  { id: 'b', u: um, v: BOX.v0, op: 'shear', axis: 'v' },   // horizontal edge: shear x along it, top edge fixed
+  { id: 'l', u: BOX.u0, v: vm, op: 'shear', axis: 'u' },   // vertical edge: shear y along it, right edge fixed
+];
+const HANDLE_OFFSET = 12;
+function frameQuad(F) { return [[BOX.u0, BOX.v1], [BOX.u1, BOX.v1], [BOX.u1, BOX.v0], [BOX.u0, BOX.v0]].map(([u, v]) => { const p = apply(F, u, v); return toPx(p[0], p[1]); }); }
+function handlePositions(F) {
+  const cw = apply(F, um, vm), c = toPx(cw[0], cw[1]);
+  return HANDLES.map(h => {
+    const w = apply(F, h.u, h.v), p = toPx(w[0], w[1]);
+    const dx = p[0] - c[0], dy = p[1] - c[1], len = Math.hypot(dx, dy) || 1;
+    // unit vectors along the edge (for edge handles) in pixel space
+    let ex = 0, ey = 0;
+    if (h.op === 'stretch' || h.op === 'shear') {
+      const q = h.axis === 'v' ? apply(F, BOX.u1, h.v) : apply(F, h.u, BOX.v1), qp = toPx(q[0], q[1]);
+      ex = qp[0] - p[0]; ey = qp[1] - p[1]; const l = Math.hypot(ex, ey) || 1; ex /= l; ey /= l;
+    }
+    return { h, x: p[0] + dx / len * HANDLE_OFFSET, y: p[1] + dy / len * HANDLE_OFFSET, ex, ey, nx: dx / len, ny: dy / len };
+  });
+}
+function drawHandle(c, hp) {
+  const { h, x, y, ex, ey, nx, ny } = hp;
+  c.beginPath();
+  if (h.op === 'scale') {
+    c.rect(x - 5, y - 5, 10, 10); c.fill(); c.stroke();
+  } else if (h.op === 'rotate') {
+    c.arc(x, y, 8, 0, Math.PI * 2); c.fill();               // backdrop disc
+    const a0 = Math.atan2(ny, nx) - 2.2, a1 = a0 + 2.6;     // curved arrow, facing outward
+    c.beginPath(); c.arc(x, y, 5, a0, a1); c.stroke();
+    const tx = x + 5 * Math.cos(a1), ty = y + 5 * Math.sin(a1), dx = -Math.sin(a1), dy = Math.cos(a1);
+    c.beginPath(); c.moveTo(tx + dx * 3.2 - Math.cos(a1) * 2.2, ty + dy * 3.2 - Math.sin(a1) * 2.2);
+    c.lineTo(tx, ty); c.lineTo(tx + dx * 3.2 + Math.cos(a1) * 2.2, ty + dy * 3.2 + Math.sin(a1) * 2.2); c.stroke();
+  } else if (h.op === 'stretch') {                           // bar across the edge, pointing along the normal
+    const w = 2.5, l = 6.5;
+    c.moveTo(x - ex * w - nx * l, y - ey * w - ny * l); c.lineTo(x + ex * w - nx * l, y + ey * w - ny * l);
+    c.lineTo(x + ex * w + nx * l, y + ey * w + ny * l); c.lineTo(x - ex * w + nx * l, y - ey * w + ny * l);
+    c.closePath(); c.fill(); c.stroke();
+  } else {                                                   // shear: slanted box along the edge
+    const pts = [[-6, -3], [3, -3], [6, 3], [-3, 3]];
+    pts.forEach(([s, t], k) => { const px = x + ex * s + nx * t, py = y + ey * s + ny * t; k ? c.lineTo(px, py) : c.moveTo(px, py); });
+    c.closePath(); c.fill(); c.stroke();
+  }
+}
+function drawOverlay(c) {
+  const total = state.maps.length;
+  if (state.sel < 0) return;      // nothing selected: no wire frames at all
+  for (let i = 0; i <= total; i++) {
+    const F = dispMap(i), q = frameQuad(F), col = mapColor(i), sel = i === state.sel;
+    c.strokeStyle = col; c.setLineDash(sel ? [] : [4, 4]); c.lineWidth = sel ? 1.5 : 1;
+    c.beginPath(); q.forEach((p, k) => k ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1])); c.closePath(); c.stroke();
+    c.setLineDash([]);
+    // the map's copy of the seed, slightly emphasised
+    c.lineWidth = sel ? 2 : 1.5; c.beginPath();
+    SEED.forEach((s, k) => { const w = apply(F, s[0], s[1]), p = toPx(w[0], w[1]); k ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1]); });
+    c.closePath(); c.stroke();
+    if (!sel) continue;
+    const cw = apply(F, um, vm), cp = toPx(cw[0], cw[1]);
+    c.fillStyle = col; c.beginPath(); c.arc(cp[0], cp[1], 2.5, 0, Math.PI * 2); c.fill();
+    c.lineWidth = 1.5; c.fillStyle = dark() ? '#1c1e24' : '#ffffff'; c.lineCap = 'round';
+    for (const hp of handlePositions(F)) drawHandle(c, hp);
+    c.lineCap = 'butt';
+  }
+}
+
+let renderQueued = false, renderBudget = FULL_BUDGET;
+function requestRender(dragging) {
+  renderBudget = dragging ? Math.min(renderBudget, DRAG_BUDGET) : FULL_BUDGET;
+  if (renderQueued) return; renderQueued = true;
+  requestAnimationFrame(() => {
+    renderQueued = false;
+    const L = drawFractal(ctx, renderBudget, true);
+    const n = state.maps.length;
+    document.getElementById('status').textContent =
+      `${n} map${n === 1 ? '' : 's'} · depth ${L}${L < state.depth ? ' (limited)' : ''} · ${lastCount.toLocaleString()} triangles · ${lastMs.toFixed(0)} ms`;
+    syncMatrixInputs();
+  });
+}
+
+// ---------------------------------------------------------------- hit testing & interaction
+const pointers = new Map();
+let drag = null, pinch = null, hashTimer = null;
+const isTouch = e => e.pointerType === 'touch';
+function hitHandle(px, py, radius) {
+  let best = null, bd = radius;
+  if (state.sel < 0) return null;
+  for (const hp of handlePositions(dispMap(state.sel))) { const d = Math.hypot(hp.x - px, hp.y - py); if (d < bd) { bd = d; best = hp.h; } }
+  return best;
+}
+function pointInQuad(q, px, py) {
+  let sign = 0;
+  for (let i = 0; i < 4; i++) {
+    const a = q[i], b = q[(i + 1) % 4], cr = (b[0] - a[0]) * (py - a[1]) - (b[1] - a[1]) * (px - a[0]);
+    if (Math.abs(cr) < 1e-9) continue;
+    const s = Math.sign(cr); if (sign === 0) sign = s; else if (s !== sign) return false;
+  }
+  return sign !== 0;
+}
+function hitMap(px, py) {
+  let best = -1, bestArea = Infinity;
+  for (let i = 0; i <= state.maps.length; i++) {
+    const q = frameQuad(dispMap(i));
+    if (!pointInQuad(q, px, py)) continue;
+    const area = Math.abs((q[1][0] - q[0][0]) * (q[3][1] - q[0][1]) - (q[3][0] - q[0][0]) * (q[1][1] - q[0][1]));
+    if (area < bestArea) { bestArea = area; best = i; }
+  }
+  return best;
+}
+function cursorFor(h) {
+  if (!h) return 'move';
+  if (h.op === 'scale') return 'nwse-resize';
+  if (h.op === 'rotate') return 'grab';
+  if (h.op === 'stretch') return h.axis === 'u' ? 'ew-resize' : 'ns-resize';
+  return h.axis === 'v' ? 'col-resize' : 'row-resize';
+}
+canvas.addEventListener('pointerdown', e => {
+  e.preventDefault(); canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, [e.clientX, e.clientY]);
+  if (pointers.size === 2) { // start pinch, abandon any drag
+    drag = null;
+    const [p, q] = [...pointers.values()];
+    pinch = { d0: Math.hypot(p[0] - q[0], p[1] - q[1]), mid0: [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2], view0: { ...state.view } };
+    return;
+  }
+  if (pointers.size > 2) return;
+  const px = e.clientX, py = e.clientY, world = toWorld(px, py);
+  const i = hitMap(px, py);
+  // a handle of the selected map yields to another map's body unless the pointer is right on it
+  const near = hitHandle(px, py, isTouch(e) ? 12 : 8);
+  const h = near || ((i < 0 || i === state.sel) ? hitHandle(px, py, isTouch(e) ? 22 : 14) : null);
+  if (h) { drag = { kind: 'handle', h, i: state.sel, F0: dispMap(state.sel), p0: world, px0: px, py0: py, moved: false }; return; }
+  if (i >= 0) {
+    state.sel = i; renderMapList();
+    drag = { kind: 'move', i, F0: dispMap(i), p0: world, px0: px, py0: py, moved: false };
+    requestRender(false); return;
+  }
+  drag = { kind: 'pan', view0: { ...state.view }, px0: px, py0: py, moved: false };
+});
+canvas.addEventListener('pointermove', e => {
+  if (pointers.has(e.pointerId)) pointers.set(e.pointerId, [e.clientX, e.clientY]);
+  if (pinch && pointers.size >= 2) {
+    const [p, q] = [...pointers.values()];
+    const d = Math.hypot(p[0] - q[0], p[1] - q[1]), mid = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+    const z = pinch.view0.zoom * Math.max(0.05, d / pinch.d0);
+    // keep the world point under mid0 under mid
+    const w = [pinch.view0.cx + (pinch.mid0[0] - W / 2) / pinch.view0.zoom, pinch.view0.cy - (pinch.mid0[1] - H / 2) / pinch.view0.zoom];
+    state.view = { zoom: z, cx: w[0] - (mid[0] - W / 2) / z, cy: w[1] + (mid[1] - H / 2) / z };
+    requestRender(true); return;
+  }
+  if (!drag) {
+    const h = hitHandle(e.clientX, e.clientY, 14);
+    canvas.style.cursor = h ? cursorFor(h) : (hitMap(e.clientX, e.clientY) >= 0 ? 'move' : 'default');
+    return;
+  }
+  const px = e.clientX, py = e.clientY;
+  if (Math.hypot(px - drag.px0, py - drag.py0) > 3) drag.moved = true;
+  if (drag.kind === 'pan') {
+    state.view.cx = drag.view0.cx - (px - drag.px0) / state.view.zoom;
+    state.view.cy = drag.view0.cy + (py - drag.py0) / state.view.zoom;
+    requestRender(true); return;
+  }
+  const p = toWorld(px, py), F0 = drag.F0;
+  if (drag.kind === 'move') {
+    setDisp(drag.i, compose(translate(p[0] - drag.p0[0], p[1] - drag.p0[1]), F0));
+    requestRender(true); return;
+  }
+  // handle drag: work in the seed-local coordinates of the frame as it was when the drag started
+  const inv = inverse(F0); if (!inv) return;
+  const l = apply(inv, p[0], p[1]), h = drag.h;
+  const clamp = s => Math.abs(s) < 0.02 ? (s < 0 ? -0.02 : 0.02) : s;
+  if (h.op === 'scale') {               // opposite corner stays fixed
+    const au = BOX.u0 + BOX.u1 - h.u, av = BOX.v0 + BOX.v1 - h.v;
+    let su, sv;
+    if (e.shiftKey) { su = (l[0] - au) / (h.u - au); sv = (l[1] - av) / (h.v - av); }
+    else { const du = h.u - au, dv = h.v - av; su = sv = ((l[0] - au) * du + (l[1] - av) * dv) / (du * du + dv * dv); }
+    setDisp(drag.i, compose(F0, scaleAbout(clamp(su), clamp(sv), au, av)));
+  } else if (h.op === 'rotate') {       // about the frame centre
+    const cw = apply(F0, um, vm);
+    let th = Math.atan2(p[1] - cw[1], p[0] - cw[0]) - Math.atan2(drag.p0[1] - cw[1], drag.p0[0] - cw[0]);
+    if (e.shiftKey) th = Math.round(th / (Math.PI / 12)) * (Math.PI / 12);
+    setDisp(drag.i, compose(rotAbout(th, cw[0], cw[1]), F0));
+  } else if (h.op === 'stretch') {      // opposite edge stays fixed
+    if (h.axis === 'u') { const au = BOX.u0 + BOX.u1 - h.u; setDisp(drag.i, compose(F0, scaleAbout(clamp((l[0] - au) / (h.u - au)), 1, au, 0))); }
+    else { const av = BOX.v0 + BOX.v1 - h.v; setDisp(drag.i, compose(F0, scaleAbout(1, clamp((l[1] - av) / (h.v - av)), 0, av))); }
+  } else {                              // shear along the edge, opposite edge fixed
+    if (h.axis === 'v') { const av = BOX.v0 + BOX.v1 - h.v; setDisp(drag.i, compose(F0, shearU((l[0] - h.u) / (h.v - av), av))); }
+    else { const au = BOX.u0 + BOX.u1 - h.u; setDisp(drag.i, compose(F0, shearV((l[1] - h.v) / (h.u - au), au))); }
+  }
+  requestRender(true);
+});
+function endPointer(e) {
+  pointers.delete(e.pointerId);
+  if (pinch && pointers.size < 2) { pinch = null; requestRender(false); return; }
+  if (!drag) return;
+  if (drag.kind === 'pan' && !drag.moved && state.sel >= 0) { state.sel = -1; renderMapList(); }
+  if (drag.kind !== 'pan' && drag.moved) { renderMapList(); scheduleHash(); }
+  drag = null; requestRender(false);
+}
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const f = Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015));
+  const w = toWorld(e.clientX, e.clientY), z = Math.max(1e-3, Math.min(1e6, state.view.zoom * f));
+  state.view = { zoom: z, cx: w[0] - (e.clientX - W / 2) / z, cy: w[1] + (e.clientY - H / 2) / z };
+  requestRender(false);
+}, { passive: false });
+window.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (state.sel < 0) return;
+  const step = e.shiftKey ? 0.1 : 0.01;
+  const nudge = (dx, dy) => { setDisp(state.sel, compose(translate(dx, dy), dispMap(state.sel))); requestRender(false); scheduleHash(); e.preventDefault(); };
+  if (e.key === 'ArrowLeft') nudge(-step, 0); else if (e.key === 'ArrowRight') nudge(step, 0);
+  else if (e.key === 'ArrowUp') nudge(0, step); else if (e.key === 'ArrowDown') nudge(0, -step);
+  else if (e.key === 'Delete') removeMap();
+});
+
+// ---------------------------------------------------------------- panel
+const $ = id => document.getElementById(id);
+function renderMapList() {
+  const box = $('maps'); box.innerHTML = '';
+  for (let i = 0; i <= state.maps.length; i++) {
+    const M = rawMap(i);
+    const div = document.createElement('div'); div.className = 'map' + (i === state.sel ? ' sel' : '');
+    const sw = document.createElement('span'); sw.className = 'sw'; sw.style.background = mapColor(i);
+    const nm = document.createElement('span'); nm.className = 'nm';
+    nm.textContent = i === 0 ? 'Map 0 (seed)' : `Map ${i}`;
+    const det = M.a * M.d - M.b * M.c;
+    const info = document.createElement('span'); info.style.color = 'var(--muted)'; info.style.fontSize = '12px';
+    info.textContent = `|det| ${Math.abs(det).toFixed(2)}${det < 0 ? ' (mirrored)' : ''}`;
+    div.append(sw, nm, info);
+    div.addEventListener('click', () => { state.sel = i; renderMapList(); requestRender(false); });
+    box.append(div);
+  }
+  const none = state.sel < 0;
+  $('del').disabled = none || state.sel === 0 || state.maps.length <= 1;
+  $('dup').disabled = none; $('resetMap').disabled = none;
+  for (const inp of $('matrix').querySelectorAll('input')) { inp.disabled = none; if (none) inp.value = ''; }
+}
+function syncMatrixInputs() {
+  const M = rawMap(state.sel); if (!M) return;
+  for (const inp of $('matrix').querySelectorAll('input')) if (document.activeElement !== inp) inp.value = (+M[inp.dataset.k].toFixed(4)).toString();
+}
+$('matrix').addEventListener('input', e => {
+  const M = rawMap(state.sel); if (!M) return;
+  const v = parseFloat(e.target.value); if (!isFinite(v)) return;
+  M[e.target.dataset.k] = v; renderMapList(); requestRender(false); scheduleHash();
+});
+function syncDepthSlider() {
+  const s = $('depth'); s.max = maxDepth(); if (state.depth > +s.max) state.depth = +s.max; s.value = state.depth; $('depthVal').textContent = state.depth;
+}
+$('depth').addEventListener('input', e => { state.depth = +e.target.value; $('depthVal').textContent = state.depth; requestRender(true); });
+$('depth').addEventListener('change', () => { requestRender(false); scheduleHash(); });
+$('color').addEventListener('change', e => { state.color = e.target.value; requestRender(false); scheduleHash(); });
+$('showAll').addEventListener('change', e => { state.showAll = e.target.checked; requestRender(false); scheduleHash(); });
+function addMap(M) {
+  if (state.maps.length >= 8) return;
+  state.maps.push(M || defaultNewMap());
+  state.sel = state.maps.length; afterMapsChanged();
+}
+function removeMap() {
+  if (state.sel <= 0 || state.maps.length <= 1) return;
+  state.maps.splice(state.sel - 1, 1); state.sel = Math.min(state.sel, state.maps.length); afterMapsChanged();
+}
+function resetMap() { // seed -> identity; other maps -> the preset's map of the same number, or a fresh default
+  if (state.sel < 0) return;
+  if (state.sel === 0) state.seed = identity();
+  else { const pm = (PRESETS[state.preset] || PRESETS.tree).maps(); state.maps[state.sel - 1] = pm[state.sel - 1] ? { ...pm[state.sel - 1] } : defaultNewMap(); }
+  afterMapsChanged();
+}
+function afterMapsChanged() { syncDepthSlider(); renderMapList(); requestRender(false); scheduleHash(); }
+$('add').onclick = () => addMap();
+$('dup').onclick = () => { // a copy of the selected map's frame, shifted a little
+  if (state.sel < 0) return;
+  const F = compose(translate(0.1, 0.1), dispMap(state.sel)), inv = inverse(state.seed);
+  if (inv) addMap(compose(F, inv));
+};
+$('del').onclick = removeMap;
+$('resetMap').onclick = resetMap;
+$('fit').onclick = () => { fitToDrawing(); requestRender(false); };
+$('reload').onclick = () => loadPreset(state.preset);
+$('collapse').onclick = () => { const p = $('panel'); p.classList.toggle('collapsed'); $('collapse').textContent = p.classList.contains('collapsed') ? 'show' : 'hide'; };
+$('link').onclick = async () => {
+  const url = location.href.split('#')[0] + stateToHash();
+  try { await navigator.clipboard.writeText(url); $('link').textContent = 'Copied!'; }
+  catch { prompt('Copy this link:', url); }
+  setTimeout(() => $('link').textContent = 'Copy link', 1500);
+};
+$('png').onclick = () => {
+  drawFractal(ctx, FULL_BUDGET, false);
+  const a = document.createElement('a'); a.download = 'fractal.png'; a.href = canvas.toDataURL('image/png'); a.click();
+  requestRender(false);
+};
+for (const [k, p] of Object.entries(PRESETS)) { const o = document.createElement('option'); o.value = k; o.textContent = p.name; $('preset').append(o); }
+$('preset').addEventListener('change', e => loadPreset(e.target.value));
+
+function loadPreset(key) {
+  const p = PRESETS[key] || PRESETS.tree; state.preset = key;
+  state.seed = identity(); state.maps = p.maps().map(M => ({ ...M })); state.sel = 1; state.depth = p.depth;
+  $('preset').value = key; syncDepthSlider(); renderMapList();
+  drawFractal(ctx, FULL_BUDGET, false); fitToDrawing(); requestRender(false); scheduleHash();
+}
+
+// ---------------------------------------------------------------- URL state
+const packMap = M => ['a', 'b', 'c', 'd', 'e', 'f'].map(k => +M[k].toFixed(5)).join(',');
+function stateToHash() {
+  const m = state.maps.map(packMap).join(';');
+  return `#m=${m}&s=${packMap(state.seed)}&d=${state.depth}&c=${state.color}&a=${state.showAll ? 1 : 0}&p=${state.preset}`;
+}
+function scheduleHash() { clearTimeout(hashTimer); hashTimer = setTimeout(() => history.replaceState(null, '', stateToHash()), 300); }
+function loadFromHash() {
+  if (!location.hash.startsWith('#m=')) return false;
+  try {
+    const q = new URLSearchParams(location.hash.slice(1));
+    const parse = s => { const v = s.split(',').map(Number); if (v.length !== 6 || v.some(x => !isFinite(x))) throw 0; return aff(...v); };
+    const maps = q.get('m').split(';').map(parse);
+    if (!maps.length) return false;
+    state.maps = maps; state.sel = 1;
+    state.seed = q.get('s') ? parse(q.get('s')) : identity();
+    state.depth = Math.max(1, Math.min(20, parseInt(q.get('d')) || 10));
+    if (['level', 'map', 'mono'].includes(q.get('c'))) state.color = q.get('c');
+    state.showAll = q.get('a') !== '0';
+    state.preset = PRESETS[q.get('p')] ? q.get('p') : 'tree';
+    return true;
+  } catch { return false; }
+}
+
+// ---------------------------------------------------------------- start
+window.addEventListener('resize', resize);
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => requestRender(false));
+dpr = window.devicePixelRatio || 1; W = canvas.clientWidth; H = canvas.clientHeight;
+canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+if (loadFromHash()) {
+  $('preset').value = state.preset; $('color').value = state.color; $('showAll').checked = state.showAll;
+  syncDepthSlider(); renderMapList(); drawFractal(ctx, FULL_BUDGET, false); fitToDrawing(); requestRender(false);
+} else {
+  loadPreset('tree');
+}
+</script>
+</body>
+</html>
