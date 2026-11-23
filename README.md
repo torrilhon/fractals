@@ -14,13 +14,13 @@ produce the familiar fractal trees, dragons and ferns; the presets cover the cla
 ## Using it
 
 * Open `index.html` in any browser, offline is fine. There are no dependencies.
-* Each coloured outline in the drawing is one map applied to the black seed triangle.
-  Tap an outline to select it, drag inside to move it.
-* **Move / scale** mode: corner handles scale uniformly (hold Shift for free scaling),
-  edge handles stretch one axis.
-* **Rotate / shear** mode: corner handles rotate about the centre (Shift snaps to 15°),
-  edge handles shear. Tapping a selected map toggles the mode.
-* Add, duplicate and remove maps in the panel, or type the matrix entries directly.
+* Map 0 is the seed triangle. Every other map is a linear map applied to it, shown as a
+  coloured outline. Tap an outline to select it, drag inside to move it.
+* On the selected frame, the two square corners scale proportionally (Shift for free
+  scaling), the two curved corners rotate about the centre (Shift snaps to 15°), the bars on
+  the top and right edges stretch in one direction, and the slanted handles on the bottom and
+  left edges shear along that edge.
+* Add, duplicate, remove and reset maps in the panel, or type the matrix entries directly.
 * Drag empty space to pan, use the mouse wheel or pinch to zoom, press *Fit* to frame the drawing.
 * The address bar always holds a link that reproduces the current figure. *Save PNG* exports the drawing.
 

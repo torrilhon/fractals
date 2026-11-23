@@ -43,9 +43,7 @@
   button:hover { border-color: var(--accent); }
   button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
   input[type=range] { flex: 1; min-width: 100px; }
-  .seg { display: flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
-  .seg button { border: 0; border-radius: 0; padding: 5px 10px; flex: 1; background: transparent; }
-  .seg button.on { background: var(--accent); color: #fff; }
+  button:disabled { opacity: 0.45; cursor: default; }
   #maps { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
   .map { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 7px; cursor: pointer;
     border: 1px solid transparent; }
@@ -75,15 +73,8 @@
       <select id="preset" style="flex:1"></select>
       <button id="fit" title="Fit the view to the drawing">Fit</button>
     </div>
-    <div class="row">
-      <label>Maps</label>
-      <div class="seg" style="flex:1">
-        <button id="modeScale" class="on" title="Drag corners to scale, edges to stretch">Move / scale</button>
-        <button id="modeRotate" title="Drag corners to rotate, edges to shear">Rotate / shear</button>
-      </div>
-    </div>
     <div id="maps"></div>
-    <div class="row"><button id="add">+ Add map</button><button id="dup">Duplicate</button><button id="del">Remove</button></div>
+    <div class="row"><button id="add" title="Add a map">+ Add</button><button id="dup">Duplicate</button><button id="del">Remove</button><button id="resetMap" title="Reset the selected map">Reset</button></div>
     <div class="matrix" id="matrix">
       <input type="number" step="0.01" data-k="a" title="a"><input type="number" step="0.01" data-k="b" title="b"><input type="number" step="0.01" data-k="e" title="e (x shift)">
       <input type="number" step="0.01" data-k="c" title="c"><input type="number" step="0.01" data-k="d" title="d"><input type="number" step="0.01" data-k="f" title="f (y shift)">
@@ -106,18 +97,18 @@
     <div class="row">
       <button id="link">Copy link</button>
       <button id="png">Save PNG</button>
-      <button id="reset" title="Reload the current preset">Reset</button>
+      <button id="reload" title="Reload the current preset">Reload preset</button>
     </div>
     <div id="status"></div>
     <details>
       <summary>How to use</summary>
       <div class="hint">
-        Each coloured outline is one linear map applied to the black seed triangle. The drawing applies all maps
-        over and over, down to the chosen depth.<br><br>
-        <b>Select</b> a map by tapping its outline. <b>Drag</b> inside it to move it.
-        In <b>Move / scale</b> mode, corner handles scale uniformly (Shift: free), edge handles stretch one axis.
-        In <b>Rotate / shear</b> mode, corner handles rotate about the centre (Shift: snap to 15°), edge handles shear.
-        Tapping a selected map toggles the mode.<br><br>
+        Map 0 is the seed triangle. Every other map is a linear map applied to it, shown as a coloured outline.
+        The drawing applies all maps over and over, down to the chosen depth.<br><br>
+        <b>Select</b> a map by tapping its outline, <b>drag</b> inside it to move it. On the selected frame:
+        the two <b>square corners</b> scale proportionally (Shift: free), the two <b>curved corners</b> rotate
+        about the centre (Shift: snap to 15°), the <b>bars</b> on the top and right edges stretch in one
+        direction, and the <b>slanted</b> handles on the bottom and left edges shear along that edge.<br><br>
         Drag empty space to pan, use the wheel or pinch to zoom. Arrow keys nudge the selected map,
         Delete removes it. The link in the address bar encodes the whole figure.
       </div>
@@ -130,6 +121,7 @@
 // ---------------------------------------------------------------- affine maps
 // A map is {a,b,c,d,e,f}:  x' = a x + b y + e,  y' = c x + d y + f
 const aff = (a, b, c, d, e, f) => ({ a, b, c, d, e, f });
+const identity = () => aff(1, 0, 0, 1, 0, 0);
 const apply = (M, x, y) => [M.a * x + M.b * y + M.e, M.c * x + M.d * y + M.f];
 function compose(M, N) { // M after N
   return aff(M.a * N.a + M.b * N.c, M.a * N.b + M.b * N.d,
@@ -152,6 +144,7 @@ function rotAbout(th, cx, cy) {
   const c = Math.cos(th), s = Math.sin(th);
   return aff(c, -s, s, c, cx - c * cx + s * cy, cy - s * cx - c * cy);
 }
+const translate = (dx, dy) => aff(1, 0, 0, 1, dx, dy);
 const scaleAbout = (su, sv, cx, cy) => aff(su, 0, 0, sv, cx - su * cx, cy - sv * cy);
 const shearU = (k, v0) => aff(1, k, 0, 1, -k * v0, 0);   // u' = u + k (v - v0)
 const shearV = (k, u0) => aff(1, 0, k, 1, 0, -k * u0);   // v' = v + k (u - u0)
@@ -191,13 +184,16 @@ const PRESETS = {
   spiral: { name: 'Spiral', depth: 14, maps: () => [
     compose(scaleAbout(0.93, 0.93, 0.45, 0.15), rotAbout(0.42, 0.45, 0.15)),
     seg(P0, P1, [0.05, 0.62], along([0.05, 0.62], -1.1, 0.33)) ] },
-  identity: { name: 'Blank (two identical copies)', depth: 6, maps: () => [aff(1, 0, 0, 1, 0, 0), aff(1, 0, 0, 1, 0, 0)] },
+  identity: { name: 'Blank (two identical copies)', depth: 6, maps: () => [identity(), identity()] },
 };
 const MAP_COLORS = ['#d7263d', '#1b6ac9', '#1f9e55', '#e08a00', '#7b3fb5', '#0f9aa8', '#c2185b', '#5d6d2e'];
+const defaultNewMap = () => seg(P0, P1, [0.05, 0.62], along([0.05, 0.62], -0.5, 0.5));
 
 // ---------------------------------------------------------------- state
+// state.seed ("Map 0") transforms the seed triangle itself; state.maps[i-1] is "Map i".
+// On screen, map i is shown through its display map F_i = M_i ∘ seed, so its frame always encloses its copy.
 const state = {
-  maps: [], sel: 0, mode: 'scale', depth: 10, color: 'level', showAll: true, preset: 'tree',
+  seed: identity(), maps: [], sel: 1, depth: 10, color: 'level', showAll: true, preset: 'tree',
   view: { cx: 0, cy: 1, zoom: 200 },
 };
 const FULL_BUDGET = 200000, DRAG_BUDGET = 30000;
@@ -205,7 +201,17 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 let W = 0, H = 0, dpr = 1;
 const dark = () => matchMedia('(prefers-color-scheme: dark)').matches;
+const inkColor = () => dark() ? '#f2f2f2' : '#111111';
+const mapColor = i => i === 0 ? inkColor() : MAP_COLORS[(i - 1) % MAP_COLORS.length];
 let lastBBox = null, lastCount = 0, lastMs = 0;
+
+const dispMap = i => i === 0 ? state.seed : compose(state.maps[i - 1], state.seed);
+function setDisp(i, F) {
+  if (i === 0) { state.seed = F; return; }
+  const inv = inverse(state.seed); if (!inv) return;
+  state.maps[i - 1] = compose(F, inv);
+}
+const rawMap = i => i === 0 ? state.seed : state.maps[i - 1];
 
 function depthFor(budget) {
   const n = state.maps.length; let total = 1, L = 0;
@@ -255,8 +261,9 @@ function drawFractal(c, budget, overlay) {
   c.fillRect(0, 0, W, H);
   const L = Math.min(state.depth, depthFor(budget));
   const n = state.maps.length, maps = state.maps, showAll = state.showAll, mode = state.color;
-  const ink = dk ? '#f2f2f2' : '#111111';
-  const [s0x, s0y] = SEED[0], [s1x, s1y] = SEED[1], [s2x, s2y] = SEED[2];
+  const ink = inkColor();
+  const seedPts = SEED.map(p => apply(state.seed, p[0], p[1]));
+  const [s0x, s0y] = seedPts[0], [s1x, s1y] = seedPts[1], [s2x, s2y] = seedPts[2];
   const bb = [Infinity, Infinity, -Infinity, -Infinity]; let count = 0;
   c.lineWidth = 1; c.lineJoin = 'round';
   // breadth first: level k holds n^k composed maps (world -> pixels), as flat arrays of 6 numbers
@@ -306,51 +313,77 @@ function drawFractal(c, budget, overlay) {
   return L;
 }
 
-// handles in seed-local coordinates
+// ---------------------------------------------------------------- gizmo
+// Handles live in the seed-local coordinates of the frame box. One diagonal scales, the other rotates;
+// the top and right edges stretch along their normal, the bottom and left edges shear along themselves.
 const um = (BOX.u0 + BOX.u1) / 2, vm = (BOX.v0 + BOX.v1) / 2;
 const HANDLES = [
-  { id: 'tl', u: BOX.u0, v: BOX.v1, kind: 'corner' }, { id: 'tr', u: BOX.u1, v: BOX.v1, kind: 'corner' },
-  { id: 'br', u: BOX.u1, v: BOX.v0, kind: 'corner' }, { id: 'bl', u: BOX.u0, v: BOX.v0, kind: 'corner' },
-  { id: 't', u: um, v: BOX.v1, kind: 'edge', axis: 'v' }, { id: 'b', u: um, v: BOX.v0, kind: 'edge', axis: 'v' },
-  { id: 'l', u: BOX.u0, v: vm, kind: 'edge', axis: 'u' }, { id: 'r', u: BOX.u1, v: vm, kind: 'edge', axis: 'u' },
+  { id: 'tl', u: BOX.u0, v: BOX.v1, op: 'scale' },
+  { id: 'br', u: BOX.u1, v: BOX.v0, op: 'scale' },
+  { id: 'tr', u: BOX.u1, v: BOX.v1, op: 'rotate' },
+  { id: 'bl', u: BOX.u0, v: BOX.v0, op: 'rotate' },
+  { id: 't', u: um, v: BOX.v1, op: 'stretch', axis: 'v' },
+  { id: 'r', u: BOX.u1, v: vm, op: 'stretch', axis: 'u' },
+  { id: 'b', u: um, v: BOX.v0, op: 'shear', axis: 'v' },   // horizontal edge: shear x along it, top edge fixed
+  { id: 'l', u: BOX.u0, v: vm, op: 'shear', axis: 'u' },   // vertical edge: shear y along it, right edge fixed
 ];
-const HANDLE_OFFSET = 11;
-function frameQuad(M) { return [[BOX.u0, BOX.v1], [BOX.u1, BOX.v1], [BOX.u1, BOX.v0], [BOX.u0, BOX.v0]].map(([u, v]) => { const p = apply(M, u, v); return toPx(p[0], p[1]); }); }
-function handlePositions(M) {
-  const cw = apply(M, um, vm), c = toPx(cw[0], cw[1]);
+const HANDLE_OFFSET = 12;
+function frameQuad(F) { return [[BOX.u0, BOX.v1], [BOX.u1, BOX.v1], [BOX.u1, BOX.v0], [BOX.u0, BOX.v0]].map(([u, v]) => { const p = apply(F, u, v); return toPx(p[0], p[1]); }); }
+function handlePositions(F) {
+  const cw = apply(F, um, vm), c = toPx(cw[0], cw[1]);
   return HANDLES.map(h => {
-    const w = apply(M, h.u, h.v), p = toPx(w[0], w[1]);
-    let dx = p[0] - c[0], dy = p[1] - c[1]; const len = Math.hypot(dx, dy) || 1;
-    return { h, x: p[0] + dx / len * HANDLE_OFFSET, y: p[1] + dy / len * HANDLE_OFFSET };
+    const w = apply(F, h.u, h.v), p = toPx(w[0], w[1]);
+    const dx = p[0] - c[0], dy = p[1] - c[1], len = Math.hypot(dx, dy) || 1;
+    // unit vectors along the edge (for edge handles) in pixel space
+    let ex = 0, ey = 0;
+    if (h.op === 'stretch' || h.op === 'shear') {
+      const q = h.axis === 'v' ? apply(F, BOX.u1, h.v) : apply(F, h.u, BOX.v1), qp = toPx(q[0], q[1]);
+      ex = qp[0] - p[0]; ey = qp[1] - p[1]; const l = Math.hypot(ex, ey) || 1; ex /= l; ey /= l;
+    }
+    return { h, x: p[0] + dx / len * HANDLE_OFFSET, y: p[1] + dy / len * HANDLE_OFFSET, ex, ey, nx: dx / len, ny: dy / len };
   });
 }
+function drawHandle(c, hp) {
+  const { h, x, y, ex, ey, nx, ny } = hp;
+  c.beginPath();
+  if (h.op === 'scale') {
+    c.rect(x - 5, y - 5, 10, 10); c.fill(); c.stroke();
+  } else if (h.op === 'rotate') {
+    c.arc(x, y, 8, 0, Math.PI * 2); c.fill();               // backdrop disc
+    const a0 = Math.atan2(ny, nx) - 2.2, a1 = a0 + 2.6;     // curved arrow, facing outward
+    c.beginPath(); c.arc(x, y, 5, a0, a1); c.stroke();
+    const tx = x + 5 * Math.cos(a1), ty = y + 5 * Math.sin(a1), dx = -Math.sin(a1), dy = Math.cos(a1);
+    c.beginPath(); c.moveTo(tx + dx * 3.2 - Math.cos(a1) * 2.2, ty + dy * 3.2 - Math.sin(a1) * 2.2);
+    c.lineTo(tx, ty); c.lineTo(tx + dx * 3.2 + Math.cos(a1) * 2.2, ty + dy * 3.2 + Math.sin(a1) * 2.2); c.stroke();
+  } else if (h.op === 'stretch') {                           // bar across the edge, pointing along the normal
+    const w = 2.5, l = 6.5;
+    c.moveTo(x - ex * w - nx * l, y - ey * w - ny * l); c.lineTo(x + ex * w - nx * l, y + ey * w - ny * l);
+    c.lineTo(x + ex * w + nx * l, y + ey * w + ny * l); c.lineTo(x - ex * w + nx * l, y - ey * w + ny * l);
+    c.closePath(); c.fill(); c.stroke();
+  } else {                                                   // shear: slanted box along the edge
+    const pts = [[-6, -3], [3, -3], [6, 3], [-3, 3]];
+    pts.forEach(([s, t], k) => { const px = x + ex * s + nx * t, py = y + ey * s + ny * t; k ? c.lineTo(px, py) : c.moveTo(px, py); });
+    c.closePath(); c.fill(); c.stroke();
+  }
+}
 function drawOverlay(c) {
-  c.lineWidth = 1;
-  state.maps.forEach((M, i) => {
-    const q = frameQuad(M), col = MAP_COLORS[i % MAP_COLORS.length], sel = i === state.sel;
+  const total = state.maps.length;
+  for (let i = 0; i <= total; i++) {
+    const F = dispMap(i), q = frameQuad(F), col = mapColor(i), sel = i === state.sel;
     c.strokeStyle = col; c.setLineDash(sel ? [] : [4, 4]); c.lineWidth = sel ? 1.5 : 1;
     c.beginPath(); q.forEach((p, k) => k ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1])); c.closePath(); c.stroke();
     c.setLineDash([]);
-    // the map's image of the seed, slightly emphasised
+    // the map's copy of the seed, slightly emphasised
     c.lineWidth = sel ? 2 : 1.5; c.beginPath();
-    SEED.forEach((s, k) => { const w = apply(M, s[0], s[1]), p = toPx(w[0], w[1]); k ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1]); });
+    SEED.forEach((s, k) => { const w = apply(F, s[0], s[1]), p = toPx(w[0], w[1]); k ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1]); });
     c.closePath(); c.stroke();
-    if (!sel) return;
-    const cw = apply(M, um, vm), cp = toPx(cw[0], cw[1]);
+    if (!sel) continue;
+    const cw = apply(F, um, vm), cp = toPx(cw[0], cw[1]);
     c.fillStyle = col; c.beginPath(); c.arc(cp[0], cp[1], 2.5, 0, Math.PI * 2); c.fill();
-    c.lineWidth = 1.5; c.fillStyle = dark() ? '#1c1e24' : '#ffffff';
-    for (const { h, x, y } of handlePositions(M)) {
-      c.beginPath();
-      if (state.mode === 'scale') {
-        const s = h.kind === 'corner' ? 5 : 4; c.rect(x - s, y - s, 2 * s, 2 * s);
-      } else if (h.kind === 'corner') {
-        c.arc(x, y, 5.5, 0, Math.PI * 2);
-      } else {
-        c.moveTo(x, y - 6); c.lineTo(x + 6, y); c.lineTo(x, y + 6); c.lineTo(x - 6, y); c.closePath();
-      }
-      c.fill(); c.stroke();
-    }
-  });
+    c.lineWidth = 1.5; c.fillStyle = dark() ? '#1c1e24' : '#ffffff'; c.lineCap = 'round';
+    for (const hp of handlePositions(F)) drawHandle(c, hp);
+    c.lineCap = 'butt';
+  }
 }
 
 let renderQueued = false, renderBudget = FULL_BUDGET;
@@ -372,9 +405,8 @@ const pointers = new Map();
 let drag = null, pinch = null, hashTimer = null;
 const isTouch = e => e.pointerType === 'touch';
 function hitHandle(px, py, radius) {
-  const M = state.maps[state.sel]; if (!M) return null;
   let best = null, bd = radius;
-  for (const hp of handlePositions(M)) { const d = Math.hypot(hp.x - px, hp.y - py); if (d < bd) { bd = d; best = hp.h; } }
+  for (const hp of handlePositions(dispMap(state.sel))) { const d = Math.hypot(hp.x - px, hp.y - py); if (d < bd) { bd = d; best = hp.h; } }
   return best;
 }
 function pointInQuad(q, px, py) {
@@ -388,18 +420,20 @@ function pointInQuad(q, px, py) {
 }
 function hitMap(px, py) {
   let best = -1, bestArea = Infinity;
-  state.maps.forEach((M, i) => {
-    const q = frameQuad(M);
-    if (!pointInQuad(q, px, py)) return;
+  for (let i = 0; i <= state.maps.length; i++) {
+    const q = frameQuad(dispMap(i));
+    if (!pointInQuad(q, px, py)) continue;
     const area = Math.abs((q[1][0] - q[0][0]) * (q[3][1] - q[0][1]) - (q[3][0] - q[0][0]) * (q[1][1] - q[0][1]));
     if (area < bestArea) { bestArea = area; best = i; }
-  });
+  }
   return best;
 }
 function cursorFor(h) {
   if (!h) return 'move';
-  if (state.mode === 'scale') return h.kind === 'corner' ? 'nwse-resize' : (h.axis === 'u' ? 'ew-resize' : 'ns-resize');
-  return h.kind === 'corner' ? 'grab' : (h.axis === 'v' ? 'col-resize' : 'row-resize');
+  if (h.op === 'scale') return 'nwse-resize';
+  if (h.op === 'rotate') return 'grab';
+  if (h.op === 'stretch') return h.axis === 'u' ? 'ew-resize' : 'ns-resize';
+  return h.axis === 'v' ? 'col-resize' : 'row-resize';
 }
 canvas.addEventListener('pointerdown', e => {
   e.preventDefault(); canvas.setPointerCapture(e.pointerId);
@@ -413,12 +447,13 @@ canvas.addEventListener('pointerdown', e => {
   if (pointers.size > 2) return;
   const px = e.clientX, py = e.clientY, world = toWorld(px, py);
   const i = hitMap(px, py);
+  // a handle of the selected map yields to another map's body unless the pointer is right on it
   const near = hitHandle(px, py, isTouch(e) ? 12 : 8);
   const h = near || ((i < 0 || i === state.sel) ? hitHandle(px, py, isTouch(e) ? 22 : 14) : null);
-  if (h) { drag = { kind: 'handle', h, i: state.sel, M0: { ...state.maps[state.sel] }, p0: world, px0: px, py0: py, moved: false }; return; }
+  if (h) { drag = { kind: 'handle', h, i: state.sel, F0: dispMap(state.sel), p0: world, px0: px, py0: py, moved: false }; return; }
   if (i >= 0) {
-    const was = i === state.sel; state.sel = i; renderMapList();
-    drag = { kind: 'move', i, M0: { ...state.maps[i] }, p0: world, px0: px, py0: py, moved: false, was };
+    state.sel = i; renderMapList();
+    drag = { kind: 'move', i, F0: dispMap(i), p0: world, px0: px, py0: py, moved: false };
     requestRender(false); return;
   }
   drag = { kind: 'pan', view0: { ...state.view }, px0: px, py0: py, moved: false };
@@ -446,43 +481,32 @@ canvas.addEventListener('pointermove', e => {
     state.view.cy = drag.view0.cy + (py - drag.py0) / state.view.zoom;
     requestRender(true); return;
   }
-  const p = toWorld(px, py), M0 = drag.M0;
+  const p = toWorld(px, py), F0 = drag.F0;
   if (drag.kind === 'move') {
-    state.maps[drag.i] = aff(M0.a, M0.b, M0.c, M0.d, M0.e + p[0] - drag.p0[0], M0.f + p[1] - drag.p0[1]);
+    setDisp(drag.i, compose(translate(p[0] - drag.p0[0], p[1] - drag.p0[1]), F0));
     requestRender(true); return;
   }
-  // handle drag: work in the seed-local coordinates of the map as it was when the drag started
-  const inv = inverse(M0); if (!inv) return;
-  const l = apply(inv, p[0], p[1]), h = drag.h; let S = null;
-  if (state.mode === 'scale') {
-    if (h.kind === 'corner') {
-      const au = BOX.u0 + BOX.u1 - h.u, av = BOX.v0 + BOX.v1 - h.v; // opposite corner stays fixed
-      let su, sv;
-      if (e.shiftKey) { su = (l[0] - au) / (h.u - au); sv = (l[1] - av) / (h.v - av); }
-      else { const du = h.u - au, dv = h.v - av; su = sv = ((l[0] - au) * du + (l[1] - av) * dv) / (du * du + dv * dv); }
-      const clamp = s => Math.abs(s) < 0.02 ? (s < 0 ? -0.02 : 0.02) : s;
-      S = scaleAbout(clamp(su), clamp(sv), au, av);
-    } else if (h.axis === 'u') {
-      const au = BOX.u0 + BOX.u1 - h.u; let su = (l[0] - au) / (h.u - au); if (Math.abs(su) < 0.02) su = su < 0 ? -0.02 : 0.02;
-      S = scaleAbout(su, 1, au, 0);
-    } else {
-      const av = BOX.v0 + BOX.v1 - h.v; let sv = (l[1] - av) / (h.v - av); if (Math.abs(sv) < 0.02) sv = sv < 0 ? -0.02 : 0.02;
-      S = scaleAbout(1, sv, 0, av);
-    }
-    state.maps[drag.i] = compose(M0, S);
-  } else {
-    if (h.kind === 'corner') { // rotate about the frame centre
-      const cw = apply(M0, um, vm);
-      let th = Math.atan2(p[1] - cw[1], p[0] - cw[0]) - Math.atan2(drag.p0[1] - cw[1], drag.p0[0] - cw[0]);
-      if (e.shiftKey) th = Math.round(th / (Math.PI / 12)) * (Math.PI / 12);
-      state.maps[drag.i] = compose(rotAbout(th, cw[0], cw[1]), M0);
-    } else if (h.axis === 'v') { // top/bottom edge: shear u along v, opposite edge fixed
-      const av = BOX.v0 + BOX.v1 - h.v, k = (l[0] - h.u) / (h.v - av);
-      state.maps[drag.i] = compose(M0, shearU(k, av));
-    } else { // left/right edge: shear v along u
-      const au = BOX.u0 + BOX.u1 - h.u, k = (l[1] - h.v) / (h.u - au);
-      state.maps[drag.i] = compose(M0, shearV(k, au));
-    }
+  // handle drag: work in the seed-local coordinates of the frame as it was when the drag started
+  const inv = inverse(F0); if (!inv) return;
+  const l = apply(inv, p[0], p[1]), h = drag.h;
+  const clamp = s => Math.abs(s) < 0.02 ? (s < 0 ? -0.02 : 0.02) : s;
+  if (h.op === 'scale') {               // opposite corner stays fixed
+    const au = BOX.u0 + BOX.u1 - h.u, av = BOX.v0 + BOX.v1 - h.v;
+    let su, sv;
+    if (e.shiftKey) { su = (l[0] - au) / (h.u - au); sv = (l[1] - av) / (h.v - av); }
+    else { const du = h.u - au, dv = h.v - av; su = sv = ((l[0] - au) * du + (l[1] - av) * dv) / (du * du + dv * dv); }
+    setDisp(drag.i, compose(F0, scaleAbout(clamp(su), clamp(sv), au, av)));
+  } else if (h.op === 'rotate') {       // about the frame centre
+    const cw = apply(F0, um, vm);
+    let th = Math.atan2(p[1] - cw[1], p[0] - cw[0]) - Math.atan2(drag.p0[1] - cw[1], drag.p0[0] - cw[0]);
+    if (e.shiftKey) th = Math.round(th / (Math.PI / 12)) * (Math.PI / 12);
+    setDisp(drag.i, compose(rotAbout(th, cw[0], cw[1]), F0));
+  } else if (h.op === 'stretch') {      // opposite edge stays fixed
+    if (h.axis === 'u') { const au = BOX.u0 + BOX.u1 - h.u; setDisp(drag.i, compose(F0, scaleAbout(clamp((l[0] - au) / (h.u - au)), 1, au, 0))); }
+    else { const av = BOX.v0 + BOX.v1 - h.v; setDisp(drag.i, compose(F0, scaleAbout(1, clamp((l[1] - av) / (h.v - av)), 0, av))); }
+  } else {                              // shear along the edge, opposite edge fixed
+    if (h.axis === 'v') { const av = BOX.v0 + BOX.v1 - h.v; setDisp(drag.i, compose(F0, shearU((l[0] - h.u) / (h.v - av), av))); }
+    else { const au = BOX.u0 + BOX.u1 - h.u; setDisp(drag.i, compose(F0, shearV((l[1] - h.v) / (h.u - au), au))); }
   }
   requestRender(true);
 });
@@ -490,8 +514,7 @@ function endPointer(e) {
   pointers.delete(e.pointerId);
   if (pinch && pointers.size < 2) { pinch = null; requestRender(false); return; }
   if (!drag) return;
-  if (drag.kind === 'move' && !drag.moved && drag.was) { state.mode = state.mode === 'scale' ? 'rotate' : 'scale'; syncModeButtons(); }
-  if (drag.kind !== 'pan' && drag.moved) scheduleHash();
+  if (drag.kind !== 'pan' && drag.moved) { renderMapList(); scheduleHash(); }
   drag = null; requestRender(false);
 }
 canvas.addEventListener('pointerup', endPointer);
@@ -505,9 +528,8 @@ canvas.addEventListener('wheel', e => {
 }, { passive: false });
 window.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
-  const M = state.maps[state.sel]; if (!M) return;
-  const step = (e.shiftKey ? 0.1 : 0.01) ;
-  const nudge = (dx, dy) => { state.maps[state.sel] = aff(M.a, M.b, M.c, M.d, M.e + dx, M.f + dy); requestRender(false); scheduleHash(); e.preventDefault(); };
+  const step = e.shiftKey ? 0.1 : 0.01;
+  const nudge = (dx, dy) => { setDisp(state.sel, compose(translate(dx, dy), dispMap(state.sel))); requestRender(false); scheduleHash(); e.preventDefault(); };
   if (e.key === 'ArrowLeft') nudge(-step, 0); else if (e.key === 'ArrowRight') nudge(step, 0);
   else if (e.key === 'ArrowUp') nudge(0, step); else if (e.key === 'ArrowDown') nudge(0, -step);
   else if (e.key === 'Delete') removeMap();
@@ -517,31 +539,30 @@ window.addEventListener('keydown', e => {
 const $ = id => document.getElementById(id);
 function renderMapList() {
   const box = $('maps'); box.innerHTML = '';
-  state.maps.forEach((M, i) => {
+  for (let i = 0; i <= state.maps.length; i++) {
+    const M = rawMap(i);
     const div = document.createElement('div'); div.className = 'map' + (i === state.sel ? ' sel' : '');
-    const sw = document.createElement('span'); sw.className = 'sw'; sw.style.background = MAP_COLORS[i % MAP_COLORS.length];
+    const sw = document.createElement('span'); sw.className = 'sw'; sw.style.background = mapColor(i);
     const nm = document.createElement('span'); nm.className = 'nm';
-    const det = M.a * M.d - M.b * M.c, sc = Math.sqrt(Math.abs(det));
-    nm.textContent = `Map ${i + 1}`;
+    nm.textContent = i === 0 ? 'Map 0 (seed)' : `Map ${i}`;
+    const det = M.a * M.d - M.b * M.c;
     const info = document.createElement('span'); info.style.color = 'var(--muted)'; info.style.fontSize = '12px';
     info.textContent = `|det| ${Math.abs(det).toFixed(2)}${det < 0 ? ' (mirrored)' : ''}`;
     div.append(sw, nm, info);
     div.addEventListener('click', () => { state.sel = i; renderMapList(); requestRender(false); });
     box.append(div);
-  });
+  }
+  $('del').disabled = state.sel === 0 || state.maps.length <= 1;
 }
 function syncMatrixInputs() {
-  const M = state.maps[state.sel]; if (!M) return;
+  const M = rawMap(state.sel); if (!M) return;
   for (const inp of $('matrix').querySelectorAll('input')) if (document.activeElement !== inp) inp.value = (+M[inp.dataset.k].toFixed(4)).toString();
 }
 $('matrix').addEventListener('input', e => {
-  const M = state.maps[state.sel]; if (!M) return;
+  const M = rawMap(state.sel); if (!M) return;
   const v = parseFloat(e.target.value); if (!isFinite(v)) return;
   M[e.target.dataset.k] = v; renderMapList(); requestRender(false); scheduleHash();
 });
-function syncModeButtons() { $('modeScale').classList.toggle('on', state.mode === 'scale'); $('modeRotate').classList.toggle('on', state.mode !== 'scale'); }
-$('modeScale').onclick = () => { state.mode = 'scale'; syncModeButtons(); requestRender(false); };
-$('modeRotate').onclick = () => { state.mode = 'rotate'; syncModeButtons(); requestRender(false); };
 function syncDepthSlider() {
   const s = $('depth'); s.max = maxDepth(); if (state.depth > +s.max) state.depth = +s.max; s.value = state.depth; $('depthVal').textContent = state.depth;
 }
@@ -551,19 +572,28 @@ $('color').addEventListener('change', e => { state.color = e.target.value; reque
 $('showAll').addEventListener('change', e => { state.showAll = e.target.checked; requestRender(false); scheduleHash(); });
 function addMap(M) {
   if (state.maps.length >= 8) return;
-  state.maps.push(M || seg(P0, P1, [0.05, 0.62], along([0.05, 0.62], -0.5, 0.5)));
-  state.sel = state.maps.length - 1; afterMapsChanged();
+  state.maps.push(M || defaultNewMap());
+  state.sel = state.maps.length; afterMapsChanged();
 }
 function removeMap() {
-  if (state.maps.length <= 1) return;
-  state.maps.splice(state.sel, 1); state.sel = Math.min(state.sel, state.maps.length - 1); afterMapsChanged();
+  if (state.sel === 0 || state.maps.length <= 1) return;
+  state.maps.splice(state.sel - 1, 1); state.sel = Math.min(state.sel, state.maps.length); afterMapsChanged();
+}
+function resetMap() { // seed -> identity; other maps -> the preset's map of the same number, or a fresh default
+  if (state.sel === 0) state.seed = identity();
+  else { const pm = (PRESETS[state.preset] || PRESETS.tree).maps(); state.maps[state.sel - 1] = pm[state.sel - 1] ? { ...pm[state.sel - 1] } : defaultNewMap(); }
+  afterMapsChanged();
 }
 function afterMapsChanged() { syncDepthSlider(); renderMapList(); requestRender(false); scheduleHash(); }
 $('add').onclick = () => addMap();
-$('dup').onclick = () => { const M = state.maps[state.sel]; if (M) addMap(aff(M.a, M.b, M.c, M.d, M.e + 0.1, M.f + 0.1)); };
+$('dup').onclick = () => { // a copy of the selected map's frame, shifted a little
+  const F = compose(translate(0.1, 0.1), dispMap(state.sel)), inv = inverse(state.seed);
+  if (inv) addMap(compose(F, inv));
+};
 $('del').onclick = removeMap;
+$('resetMap').onclick = resetMap;
 $('fit').onclick = () => { fitToDrawing(); requestRender(false); };
-$('reset').onclick = () => loadPreset(state.preset);
+$('reload').onclick = () => loadPreset(state.preset);
 $('collapse').onclick = () => { const p = $('panel'); p.classList.toggle('collapsed'); $('collapse').textContent = p.classList.contains('collapsed') ? 'show' : 'hide'; };
 $('link').onclick = async () => {
   const url = location.href.split('#')[0] + stateToHash();
@@ -581,24 +611,27 @@ $('preset').addEventListener('change', e => loadPreset(e.target.value));
 
 function loadPreset(key) {
   const p = PRESETS[key] || PRESETS.tree; state.preset = key;
-  state.maps = p.maps().map(M => ({ ...M })); state.sel = 0; state.depth = p.depth;
+  state.seed = identity(); state.maps = p.maps().map(M => ({ ...M })); state.sel = 1; state.depth = p.depth;
   $('preset').value = key; syncDepthSlider(); renderMapList();
   drawFractal(ctx, FULL_BUDGET, false); fitToDrawing(); requestRender(false); scheduleHash();
 }
 
 // ---------------------------------------------------------------- URL state
+const packMap = M => ['a', 'b', 'c', 'd', 'e', 'f'].map(k => +M[k].toFixed(5)).join(',');
 function stateToHash() {
-  const m = state.maps.map(M => ['a', 'b', 'c', 'd', 'e', 'f'].map(k => +M[k].toFixed(5)).join(',')).join(';');
-  return `#m=${m}&d=${state.depth}&c=${state.color}&a=${state.showAll ? 1 : 0}&p=${state.preset}`;
+  const m = state.maps.map(packMap).join(';');
+  return `#m=${m}&s=${packMap(state.seed)}&d=${state.depth}&c=${state.color}&a=${state.showAll ? 1 : 0}&p=${state.preset}`;
 }
 function scheduleHash() { clearTimeout(hashTimer); hashTimer = setTimeout(() => history.replaceState(null, '', stateToHash()), 300); }
 function loadFromHash() {
   if (!location.hash.startsWith('#m=')) return false;
   try {
     const q = new URLSearchParams(location.hash.slice(1));
-    const maps = q.get('m').split(';').map(s => { const v = s.split(',').map(Number); if (v.length !== 6 || v.some(x => !isFinite(x))) throw 0; return aff(...v); });
+    const parse = s => { const v = s.split(',').map(Number); if (v.length !== 6 || v.some(x => !isFinite(x))) throw 0; return aff(...v); };
+    const maps = q.get('m').split(';').map(parse);
     if (!maps.length) return false;
-    state.maps = maps; state.sel = 0;
+    state.maps = maps; state.sel = 1;
+    state.seed = q.get('s') ? parse(q.get('s')) : identity();
     state.depth = Math.max(1, Math.min(20, parseInt(q.get('d')) || 10));
     if (['level', 'map', 'mono'].includes(q.get('c'))) state.color = q.get('c');
     state.showAll = q.get('a') !== '0';
@@ -618,7 +651,6 @@ if (loadFromHash()) {
 } else {
   loadPreset('tree');
 }
-syncModeButtons();
 </script>
 </body>
 </html>
